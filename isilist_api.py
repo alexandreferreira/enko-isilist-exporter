@@ -8,7 +8,7 @@ import requests
 
 class IsilistRequests(object):
 
-    URL_BASE = 'https://api.isilist.com.br'
+    URL_BASE = 'http://isilist-staging.elasticbeanstalk.com'
     GET_USER_URL = '/v1/users/is_store'
     REGISTER_USER_URL = '/v1/register_app'
     SYNC_FULL_URL = '/v1/sync/full'

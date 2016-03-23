@@ -1,4 +1,8 @@
+import StringIO
+import gzip
+import json
 import os
+
 import requests
 
 
@@ -15,21 +19,24 @@ class EnkoAPI(object):
         self.enko_requests = EnkoRequests()
 
     def process_sales(self, sales_info, date):
-        sales = sales_info['sale']
-        sales_ids = map(lambda x: x['id'], sales)
+
+        sales_ids = map(lambda x: str(x['sale']['external_id']), sales_info)
 
         self.remote_sales = self.enko_requests.get_all_sales_by_date(sales_ids, date)
-        self.remote_sales_keys = {sale["external_id"]: sale for sale in self.remote_sales}
+        self.remote_sales_keys = {sale["external_id"]: sale for sale in self.remote_sales['saved']}
 
-        for sale in sales:
-            remote_sale = self.get_remote_sale(sale['external_id'])
-            if remote_sale and not self.check_sale_changed(sale, remote_sale):
-                dirty_items = self.sale_items_equals(sale, sales_info['sale_items'])
-                dirty_payments = self.payments_not_equals(sale, sales_info['sale_payments'])
+        for sale in sales_info:
+            remote_sale = self.get_remote_sale(sale['sale']['external_id'])
+            if remote_sale and not self.check_sale_changed(sale['sale'], remote_sale):
+                dirty_items = self.sale_items_equals(sale['sale'], sales_info['items'])
+                dirty_payments = self.payments_not_equals(sale['sale'], sales_info['payments'])
                 if not dirty_items and not dirty_payments:
                     continue
-            self.sales_to_send.append(sales_info)
-        print self.sales_to_send
+            self.sales_to_send.append(sale)
+        self.sales_to_send = map(lambda x: {'sale': x['sale'],
+                                            'sale_items': x['items'],
+                                            'sale_payments': x['payments']}, self.sales_to_send)
+        self.enko_requests.send_sales_by_date(sales_info, date)
 
     def sale_items_equals(self, sale, local_sale_items):
         remote_sale_items = self.enko_requests.get_all_sales_items_by_sale(sale['external_id'])
@@ -68,10 +75,11 @@ class EnkoRequests(object):
     CHECK_SALES = BASE_URL + "/etl/import/check/sales/"
     CHECK_SALE_ITEMS = BASE_URL + "/etl/sale/%s/items/"
     CHECK_SALE_PAYMENTS = BASE_URL + "/etl/sale/%s/payments/"
+    SEND_SALES = BASE_URL + "/etl/import/"
     TOKEN = os.getenv("ENKO_TOKEN")
 
     def get_all_sales_by_date(self, ids,  date):
-        ids = ids.join(',')
+        ids = ','.join(ids)
         req = requests.post(self.CHECK_SALES, json={"ids": ids, "start_date": date, "end_date": date,
                                                     "token": self.TOKEN})
         req.raise_for_status()
@@ -89,5 +97,14 @@ class EnkoRequests(object):
         req.raise_for_status()
         return req.json()
 
-    def send_sales_by_date(self):
-        return []
+    def send_sales_by_date(self, sales_info, date):
+        print json.dumps(sales_info)
+        out = StringIO.StringIO()
+        with gzip.GzipFile(fileobj=out, mode="w") as f:
+            f.write(json.dumps(sales_info))
+        files = {'file': ('isilist', out.getvalue())}
+        payload = {'token': self.TOKEN, 'date': date}
+        req = requests.post(self.SEND_SALES, files=files, data=payload)
+        req.raise_for_status()
+
+        return req.content

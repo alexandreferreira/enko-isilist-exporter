@@ -9,7 +9,6 @@ class BaseModel(Model):
     id = PrimaryKeyField()
     modified_at = CharField(null=True)
     created_at = CharField(null=True)
-    expires_at = CharField(null=True)
     deleted = BooleanField(null=True)
 
     class Meta:
@@ -43,13 +42,15 @@ class UserLists(BaseModel):
     description = CharField(null=True)
     responded_list_id = BigIntegerField(null=True)
     thread_id = BigIntegerField()
+    thread_status = IntegerField()
     waiting_response = BooleanField(null=True)
     waiting_acceptance = BooleanField(null=True)
     acceptance_response = BooleanField(null=True)
     status = IntegerField(null=True)
     last_status_since = CharField(null=True)
     collaborator_id = BigIntegerField(null=True)
-    discount = DecimalField()
+    discount = DecimalField(null=True)
+    expires_at = CharField(null=True)
 
     @classmethod
     def get_all_received_lists(cls):
@@ -71,47 +72,48 @@ class UserLists(BaseModel):
         return cls.get_all_received_lists()
 
     @property
+    def client(self):
+        try:
+            return Contatcs.get(Contatcs.id == self.client_id)
+        except DoesNotExist:
+            return None
+
+    @property
+    def seller(self):
+        if self.collaborator_id:
+            return Contatcs.get(Contatcs.id == self.collaborator_id)
+        else:
+            return None
+
+    @property
     def subtotal(self):
-        return UserListItems.select(fn.Sum(UserListItems.total)).scalar()
+        return UserListItems\
+            .select(fn.Sum(UserListItems.total))\
+            .filter(UserListItems.list_id == self.id)\
+            .scalar()
 
     @property
     def total(self):
-        return self.subtotal - self.discount
+        return (self.subtotal or 0) - (self.discount or 0)
 
     @property
     def date_approved(self):
-        try:
-            return ListActions.get(ListActions.list_id == self.id and
-                                   ListActions.kind == 1 and
-                                   ListActions.user_id == self.client_id)
-        except DoesNotExist:
-            return None
+        return ListActions.get(ListActions.list_id == self.id and
+                               ListActions.kind == 1 and
+                               ListActions.user_id == self.client_id).created_at
 
     @property
     def date_cancelled(self):
-        try:
-            return ListActions.get(ListActions.list_id == self.id and
-                                   ListActions.kind == 6)
-        except DoesNotExist:
-            return None
+        return ListActions.get(ListActions.list_id == self.id and
+                               ListActions.kind == 6).created_at
 
     @property
     def date_rejected(self):
-        try:
-            return ListActions.get(ListActions.list_id == self.id and
-                                   ListActions.kind == 2)
-        except DoesNotExist:
-            return None
-
-    def date_done(self):
-        try:
-            return ListActions.get(ListActions.list_id == self.id and
-                                   ListActions.kind == 4)
-        except DoesNotExist:
-            return None
+        return ListActions.get(ListActions.list_id == self.id and
+                               ListActions.kind == 2).created_at
 
     @property
-    def collaborator(self):
+    def seller(self):
         try:
             return Contatcs.get(Contatcs.id == self.collaborator_id)
         except DoesNotExist:
@@ -119,17 +121,23 @@ class UserLists(BaseModel):
 
     @property
     def enko_status(self):
-        if self.thread_id in (1, 2, 3, 5):
+        if self.thread_status in (1, 2, 3, 4, 5):
             return 1
-        elif self.thread_id == 6:
+        elif self.thread_status == 6:
             return 3
-        elif self.thread_id in (5, 7):
+        elif self.thread_status in (5, 7):
             return 4
 
 
     @property
     def get_status_unicode(self):
-        return UserLists.STATUS.get(str(self.thread_id))
+        return UserLists.STATUS.get(str(self.thread_status))
+
+    def get_sale_items(self):
+        return UserListItems.get_all_items_from_list(self.id)
+
+    def get_sale_payments(self):
+        return ListPayments.get_all_payments_from_list(self.id)
 
     def __unicode__(self):
         return "%s - %s" % (self.id, self.name)
@@ -153,7 +161,27 @@ class UserListItems(BaseModel):
     def get_all_items_from_list(cls, list_id):
         return cls.select().where(cls.list_id == list_id)
 
-# TODO importar profile dentro de contatos
+
+class Profile(BaseModel):
+    kind = IntegerField()
+    email = CharField()
+    name = CharField()
+    email_verified = BooleanField()
+    identity_number = CharField(null=True)
+    country = CharField(null=True)
+    state = CharField(null=True)
+    city = CharField(null=True)
+    postal_code = CharField(null=True)
+    address_line_1 = CharField(null=True)
+    address_line_2 = CharField(null=True)
+
+    def __unicode__(self):
+        return "%s - %s " % (self.id, self.name)
+
+    class Meta:
+        database = db
+
+
 class Contatcs(BaseModel):
     kind = IntegerField()
     email = CharField()
@@ -180,15 +208,20 @@ class ListPayments(BaseModel):
     client_id = BigIntegerField()
     thread_id = BigIntegerField()
     price = DecimalField()
+    operator_name = CharField(null=True)
     operator_status = CharField()
     status = CharField()
 
     def __unicode__(self):
         return "%s - %s " % (self.id, self.list_id)
 
+    class Meta:
+        database = db
+
     @classmethod
     def get_all_payments_from_list(cls, list_id):
-        return cls.select().where(cls.list_id == list_id)
+        return cls.select().where(cls.list_id == list_id and (cls.status == 'AUTHORIZED' or
+                                                              cls.status == 'PAID'))
 
 
 class ListActions(BaseModel):
@@ -196,6 +229,9 @@ class ListActions(BaseModel):
     user_id = BigIntegerField()
     motive = CharField(null=True)
     list_id = BigIntegerField()
+
+    class Meta:
+        database = db
 
     def __unicode__(self):
         return "%s - %s - %s" % (self.id, self.kind, self.user_id)

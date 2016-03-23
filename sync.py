@@ -1,5 +1,5 @@
 import repository
-from repository import Contatcs, UserLists, UserListItems, ListActions
+from repository import Contatcs, UserLists, UserListItems, ListActions, ListPayments
 
 
 def dictfetchall(entity):
@@ -15,7 +15,8 @@ def dictfetchall(entity):
 def cleanup_data(data, fields):
     new_data = {}
     for field in fields:
-        new_data[field] = data.pop(field)
+        if field in data:
+            new_data[field] = data.pop(field)
     return new_data
 
 
@@ -29,8 +30,8 @@ class Sync(object):
         print "Contacts: " + str(self.sync_contacts())
         print "Lists: " + str(self.sync_lists())
         print "List Items: " + str(self.sync_list_items())
-        self.sync_list_actions()
-        self.sync_list_payments()
+        print "List Actions: " + str(self.sync_list_actions())
+        print "List Payments: " + str(self.sync_list_payments())
 
     def sync_contacts(self):
         with repository.db.atomic():
@@ -48,7 +49,7 @@ class Sync(object):
                 list_id = user_list.pop('id')
                 user_list = cleanup_data(user_list, ["modified_at", "created_at", "deleted", "expires_at", "foreign_id",
                                                      "name", "client_id", "description", "responded_list_id",
-                                                     "thread_id", "owner_id",
+                                                     "thread_id", "owner_id", "discount", "thread_status",
                                                      "waiting_response", "waiting_acceptance", "acceptance_response",
                                                      "status", "last_status_since", "collaborator_id", "store_id"])
                 UserLists.create_or_update(list_id, **user_list)
@@ -69,9 +70,9 @@ class Sync(object):
             for list_action in dictfetchall(self.sync_data['list_payments']):
                 list_action_id = list_action.pop('id')
                 list_action = cleanup_data(list_action, ["list_id", "store_id", "client_id", "thread_id",
-                                                         "price", "operator_status", "status"])
-                UserListItems.create_or_update(list_action_id, **list_action)
-        return ListActions.select().count()
+                                                         "price", "operator_status", "status", "operator_name"])
+                ListPayments.create_or_update(list_action_id, **list_action)
+        return ListPayments.select().count()
 
     def sync_list_actions(self):
         with repository.db.atomic():
